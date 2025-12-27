@@ -15,6 +15,8 @@ st.markdown("""
     .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4251; }
     [data-testid="stHeader"] { background: rgba(0,0,0,0); }
     section[data-testid="stSidebar"] { display: none; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #1e2130; border-radius: 5px; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -25,7 +27,7 @@ if 'authenticated' not in st.session_state:
 if not st.session_state.authenticated:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.title("🏛️ JPM Macro Terminal")
+        st.title("JPM Macro Terminal")
         st.subheader("Secure Access Gateway")
         key_input = st.text_input("Enter FRED API Key", type="password")
         if st.button("Initialize Terminal"):
@@ -39,92 +41,100 @@ if not st.session_state.authenticated:
 try:
     fred = Fred(api_key=st.session_state.api_key)
     
-    # Standardized 2025 FRED IDs
     full_map = {
-        'USALOLITONOSTSAM': 'Leading Index', 
-        'USPHCI': 'Coincident Index',
-        'IC4WSA': 'Jobless Claims', 
-        'TCU': 'Capacity Util',
-        'T10Y2Y': 'Yield Curve', 
-        'PERMIT': 'Housing Permits',
-        'DGORDER': 'New Orders', 
-        'RSAFS': 'Retail Sales',
-        'BAA10Y': 'Credit Spreads', 
-        'BAMLH0A0HYM2': 'HY Spreads',
-        'VIXCLS': 'VIX', 
-        'M2SL': 'Money Supply',
-        'RTWEXBGS': 'Real USD Index', 
-        'T10YIE': 'Breakevens',
-        'RAILFRTCARLOADSD11': 'Rail Freight', 
-        'UMCSENT': 'Cons Sentiment',
-        'DRTSCWM': 'Lending Standards', 
-        'REAINTRATREARAT10Y': 'Real Yields'
+        'USALOLITONOSTSAM': 'Leading Index', 'USPHCI': 'Coincident Index',
+        'IC4WSA': 'Jobless Claims', 'TCU': 'Capacity Util',
+        'T10Y2Y': 'Yield Curve', 'PERMIT': 'Housing Permits',
+        'DGORDER': 'New Orders', 'RSAFS': 'Retail Sales',
+        'BAA10Y': 'Credit Spreads', 'BAMLH0A0HYM2': 'HY Spreads',
+        'VIXCLS': 'VIX', 'M2SL': 'Money Supply',
+        'RTWEXBGS': 'Real USD Index', 'T10YIE': 'Breakevens',
+        'RAILFRTCARLOADSD11': 'Rail Freight', 'UMCSENT': 'Cons Sentiment',
+        'DRTSCWM': 'Lending Standards', 'REAINTRATREARAT10Y': 'Real Yields'
     }
 
-    data_dict = {}
-    with st.spinner('Accessing Macro Stream...'):
+    @st.cache_data(ttl=3600)
+    def fetch_data(api_key):
+        data_dict = {}
         for series_id, name in full_map.items():
             try:
                 data_dict[name] = fred.get_series(series_id)
             except:
                 continue
-    
-    df = pd.DataFrame(data_dict).resample('ME').last().ffill().tail(60)
+        return pd.DataFrame(data_dict).resample('ME').last().ffill()
+
+    raw_df = fetch_data(st.session_state.api_key)
+    df = raw_df.tail(120)
     z = (df - df.rolling(36).mean()) / df.rolling(36).std()
-    latest = z.iloc[-1].dropna()
+    latest_z = z.iloc[-1].dropna()
 
-    # Invert Risk Metrics
     inv = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'Real USD Index']
-    for col in latest.index:
-        if col in inv: latest[col] = -latest[col]
+    adjusted_z = latest_z.copy()
+    for col in adjusted_z.index:
+        if col in inv: adjusted_z[col] = -adjusted_z[col]
 
-    # DASHBOARD UI
-    st.title("🏛️ Institutional Macro Dashboard")
-    st.caption(f"Status: Synchronized | Refreshed: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    st.divider()
+    # UI LAYOUT
+    st.title("Institutional Macro Dashboard")
+    tab1, tab2, tab3 = st.tabs(["Regime Detection", "Historical Explorer", "Release Calendar"])
 
-    avg_score = latest.mean()
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Regime Score", f"{avg_score:.2f}")
-    m2.metric("Growth Z", f"{latest.get('Leading Index', 0):.2f}")
-    m3.metric("Inflation Z", f"{latest.get('Breakevens', 0):.2f}")
-    m4.metric("Risk Sentiment", "Risk-On" if latest.get('VIX', 0) > 0 else "Risk-Off")
+    with tab1:
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.write("### Investment Clock Path")
+            path_df = z[['Leading Index', 'Breakevens']].tail(12).reset_index()
+            
+            fig_clock = go.Figure()
+            # Quadrant Rectangles
+            fig_clock.add_vrect(x0=0, x1=3, y0=0, y1=3, fillcolor="green", opacity=0.05, layer="below", line_width=0)
+            fig_clock.add_vrect(x0=-3, x1=0, y0=-3, y1=0, fillcolor="red", opacity=0.05, layer="below", line_width=0)
+            
+            # Historical Path
+            fig_clock.add_trace(go.Scatter(
+                x=path_df['Leading Index'], y=path_df['Breakevens'],
+                mode='lines+markers', line=dict(color='rgba(255, 255, 255, 0.2)', width=2),
+                marker=dict(size=8, color='rgba(255, 255, 255, 0.5)'),
+                name='Path'
+            ))
+            
+            # Current Point
+            fig_clock.add_trace(go.Scatter(
+                x=[path_df['Leading Index'].iloc[-1]], y=[path_df['Breakevens'].iloc[-1]],
+                mode='markers+text', marker=dict(size=20, color='gold', line=dict(width=2, color='white')),
+                text=["CURRENT"], textposition="top right", name='Current Status'
+            ))
 
-    c1, c2 = st.columns([1, 1])
+            fig_clock.update_layout(
+                template="plotly_dark", height=600,
+                xaxis=dict(title="Growth (Z-Score)", range=[-3, 3], zeroline=True, zerolinewidth=2),
+                yaxis=dict(title="Inflation (Z-Score)", range=[-3, 3], zeroline=True, zerolinewidth=2),
+                showlegend=False
+            )
+            st.plotly_chart(fig_clock, use_container_width=True)
 
-    with c1:
-        st.write("### Investment Clock Path")
-        path_df = z[['Leading Index', 'Breakevens']].tail(24).reset_index()
-        fig_clock = px.scatter(
-            path_df, x='Leading Index', y='Breakevens',
-            text=path_df['index'].dt.strftime('%b %y'),
-            template="plotly_dark"
-        )
-        fig_clock.add_shape(type="line", x0=-3, y0=0, x1=3, y1=0, line=dict(color="gray", dash="dash"))
-        fig_clock.add_shape(type="line", x0=0, y0=-3, x1=0, y1=3, line=dict(color="gray", dash="dash"))
-        fig_clock.update_traces(mode='lines+markers+text', marker=dict(size=12, color='gold'), textposition='top center')
-        fig_clock.update_layout(xaxis_title="Growth (Z)", yaxis_title="Inflation (Z)", height=600)
-        st.plotly_chart(fig_clock, use_container_width=True)
+        with c2:
+            st.write("### Indicator Scorecard")
+            score_df = adjusted_z.sort_values().reset_index()
+            score_df.columns = ['Indicator', 'Score']
+            fig_bar = px.bar(score_df, x='Score', y='Indicator', orientation='h',
+                             color='Score', color_continuous_scale='RdYlGn', template="plotly_dark")
+            fig_bar.update_layout(height=600, coloraxis_showscale=False)
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-    with c2:
-        st.write("### Indicator Scorecard")
-        score_df = latest.sort_values().reset_index()
-        score_df.columns = ['Indicator', 'Score']
-        fig_bar = px.bar(
-            score_df, x='Score', y='Indicator', orientation='h',
-            color='Score', color_continuous_scale='RdYlGn',
-            template="plotly_dark"
-        )
-        fig_bar.update_layout(showlegend=False, height=600, coloraxis_showscale=False)
-        st.plotly_chart(fig_bar, use_container_width=True)
+    with tab2:
+        st.write("### Historical Data Explorer")
+        selected_indicator = st.selectbox("Select Indicator", options=list(full_map.values()))
+        fig_hist = px.line(raw_df, y=selected_indicator, template="plotly_dark")
+        fig_hist.update_traces(line_color='#00d1ff')
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-    st.write("### Style Allocation Guidance")
-    style_data = {
-        "Regime": ["Expansion", "Recovery", "Slowdown", "Contraction"],
-        "Top Styles": ["Momentum, Cyclicals", "Value, Small Caps", "Quality, Low Vol", "Defensive Growth, Cash"],
-        "Asset Allocation": ["Overweight Equities", "Overweight Value", "Overweight Defensive", "Overweight Bonds/Gold"]
-    }
-    st.table(pd.DataFrame(style_data))
+    with tab3:
+        st.write("### Macro Release Calendar (Typical Monthly Schedule)")
+        calendar_data = {
+            "Indicator": ["Jobless Claims", "VIX", "Yield Curve", "Retail Sales", "Housing Permits", "Industrial Production", "CPI / Breakevens", "PMI / Leading Index"],
+            "Frequency": ["Weekly (Thursday)", "Real-time", "Daily", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Start-month)"],
+            "Reporting Agency": ["Dept of Labor", "CBOE", "Treasury", "Census Bureau", "Census Bureau", "Federal Reserve", "BLS", "OECD / Conference Board"]
+        }
+        st.table(pd.DataFrame(calendar_data))
 
     if st.button("Reset Terminal"):
         st.session_state.authenticated = False
