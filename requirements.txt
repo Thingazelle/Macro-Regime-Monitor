@@ -1,5 +1,5 @@
 fredapi
 pandas
-matplotlib
+plotly
 numpy
 streamlit
