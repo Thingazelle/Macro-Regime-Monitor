@@ -6,10 +6,9 @@ import plotly.express as px
 import datetime
 import numpy as np
 
-# 1. PAGE SETUP & CLASSY THEME
+# 1. PAGE SETUP & THEME
 st.set_page_config(page_title="JPM Macro Terminal", layout="wide", initial_sidebar_state="collapsed")
 
-# Custom CSS for a professional dark "Terminal" look
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: #ffffff; }
@@ -19,7 +18,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. LOGIN / API KEY HANDLER
+# 2. AUTHENTICATION
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -28,55 +27,62 @@ if not st.session_state.authenticated:
     with col2:
         st.title("🏛️ JPM Macro Terminal")
         st.subheader("Secure Access Gateway")
-        key_input = st.text_input("Enter FRED API Key to Initialize", type="password")
+        key_input = st.text_input("Enter FRED API Key", type="password")
         if st.button("Initialize Terminal"):
             if key_input:
                 st.session_state.api_key = key_input
                 st.session_state.authenticated = True
                 st.rerun()
-            else:
-                st.error("Invalid Key")
     st.stop()
 
-# 3. DASHBOARD LOGIC
-api_key = st.session_state.api_key
-
+# 3. TERMINAL LOGIC
 try:
-    fred = Fred(api_key=api_key)
+    fred = Fred(api_key=st.session_state.api_key)
     
+    # Standardized 2025 FRED IDs
     full_map = {
-        'USALOLITONOSTSAM': 'Leading Index', 'USPHCI': 'Coincident Index',
-        'IC4WSA': 'Jobless Claims', 'MCUMFN': 'Capacity Util',
-        'T10Y2Y': 'Yield Curve', 'PERMIT': 'Housing Permits',
-        'DGORDER': 'New Orders', 'RSAFS': 'Retail Sales',
-        'BAA10Y': 'Credit Spreads', 'BAMLH0A0HYM2': 'HY Spreads',
-        'VIXCLS': 'VIX', 'M2SL': 'Money Supply',
-        'RTWEXBGS': 'Real USD Index', 'T10YIE': 'Breakevens',
-        'RAILFRTCARLOADSD11': 'Rail Freight', 'UMCSENT': 'Cons Sentiment',
-        'DRTSCWM': 'Lending Standards', 'REAINTRATREARAT10Y': 'Real Yields'
+        'USALOLITONOSTSAM': 'Leading Index', 
+        'USPHCI': 'Coincident Index',
+        'IC4WSA': 'Jobless Claims', 
+        'TCU': 'Capacity Util',
+        'T10Y2Y': 'Yield Curve', 
+        'PERMIT': 'Housing Permits',
+        'DGORDER': 'New Orders', 
+        'RSAFS': 'Retail Sales',
+        'BAA10Y': 'Credit Spreads', 
+        'BAMLH0A0HYM2': 'HY Spreads',
+        'VIXCLS': 'VIX', 
+        'M2SL': 'Money Supply',
+        'RTWEXBGS': 'Real USD Index', 
+        'T10YIE': 'Breakevens',
+        'RAILFRTCARLOADSD11': 'Rail Freight', 
+        'UMCSENT': 'Cons Sentiment',
+        'DRTSCWM': 'Lending Standards', 
+        'REAINTRATREARAT10Y': 'Real Yields'
     }
 
     data_dict = {}
-    with st.spinner('Accessing Global Macro Stream...'):
+    with st.spinner('Accessing Macro Stream...'):
         for series_id, name in full_map.items():
             try:
                 data_dict[name] = fred.get_series(series_id)
-            except: continue
+            except:
+                continue
     
     df = pd.DataFrame(data_dict).resample('ME').last().ffill().tail(60)
     z = (df - df.rolling(36).mean()) / df.rolling(36).std()
     latest = z.iloc[-1].dropna()
 
+    # Invert Risk Metrics
     inv = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'Real USD Index']
     for col in latest.index:
         if col in inv: latest[col] = -latest[col]
 
-    # HEADER
+    # DASHBOARD UI
     st.title("🏛️ Institutional Macro Dashboard")
     st.caption(f"Status: Synchronized | Refreshed: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
     st.divider()
 
-    # METRICS
     avg_score = latest.mean()
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Regime Score", f"{avg_score:.2f}")
@@ -84,17 +90,13 @@ try:
     m3.metric("Inflation Z", f"{latest.get('Breakevens', 0):.2f}")
     m4.metric("Risk Sentiment", "Risk-On" if latest.get('VIX', 0) > 0 else "Risk-Off")
 
-    # CHARTS
     c1, c2 = st.columns([1, 1])
 
     with c1:
         st.write("### Investment Clock Path")
         path_df = z[['Leading Index', 'Breakevens']].tail(24).reset_index()
-        # FIXED: Corrected scatter plot syntax
         fig_clock = px.scatter(
-            path_df, 
-            x='Leading Index', 
-            y='Breakevens',
+            path_df, x='Leading Index', y='Breakevens',
             text=path_df['index'].dt.strftime('%b %y'),
             template="plotly_dark"
         )
@@ -109,18 +111,13 @@ try:
         score_df = latest.sort_values().reset_index()
         score_df.columns = ['Indicator', 'Score']
         fig_bar = px.bar(
-            score_df, 
-            x='Score', 
-            y='Indicator', 
-            orientation='h',
-            color='Score', 
-            color_continuous_scale='RdYlGn',
+            score_df, x='Score', y='Indicator', orientation='h',
+            color='Score', color_continuous_scale='RdYlGn',
             template="plotly_dark"
         )
         fig_bar.update_layout(showlegend=False, height=600, coloraxis_showscale=False)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-    # STYLE RECOMMENDATION TABLE
     st.write("### Style Allocation Guidance")
     style_data = {
         "Regime": ["Expansion", "Recovery", "Slowdown", "Contraction"],
@@ -135,6 +132,3 @@ try:
 
 except Exception as e:
     st.error(f"Terminal Fault: {e}")
-    if st.button("Return to Gateway"):
-        st.session_state.authenticated = False
-        st.rerun()
