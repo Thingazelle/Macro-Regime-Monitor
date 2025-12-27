@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import datetime
 
 # 1. SETUP
-FRED_API_KEY = 'YOUR_FRED_API_KEY'
+FRED_API_KEY = '6fb9a24dabb670baab332ab6a281da1b '
 start = datetime.datetime.now() - datetime.timedelta(days=365*10)
 
 # 2. FULL MAPPING (All available on FRED)
