@@ -6,21 +6,22 @@ import plotly.express as px
 import datetime
 import numpy as np
 
-# 1. PAGE SETUP & THEME
+# Page configuration
 st.set_page_config(page_title="JPM Macro Terminal", layout="wide", initial_sidebar_state="collapsed")
 
+# Professional Terminal Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: #ffffff; }
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4251; }
+    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 5px; border: 1px solid #3e4251; }
     [data-testid="stHeader"] { background: rgba(0,0,0,0); }
     section[data-testid="stSidebar"] { display: none; }
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #1e2130; border-radius: 5px; color: white; }
+    .stTabs [data-baseweb="tab"] { height: 50px; background-color: #1e2130; border-radius: 5px; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. AUTHENTICATION
+# Authentication Handler
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -28,19 +29,20 @@ if not st.session_state.authenticated:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.title("JPM Macro Terminal")
-        st.subheader("Secure Access Gateway")
+        st.subheader("Authentication Required")
         key_input = st.text_input("Enter FRED API Key", type="password")
-        if st.button("Initialize Terminal"):
+        if st.button("Access Terminal"):
             if key_input:
                 st.session_state.api_key = key_input
                 st.session_state.authenticated = True
                 st.rerun()
     st.stop()
 
-# 3. TERMINAL LOGIC
+# Macro Indicator Logic
 try:
     fred = Fred(api_key=st.session_state.api_key)
     
+    # Exhaustive Appendix B Mapping
     full_map = {
         'USALOLITONOSTSAM': 'Leading Index', 'USPHCI': 'Coincident Index',
         'IC4WSA': 'Jobless Claims', 'TCU': 'Capacity Util',
@@ -54,7 +56,7 @@ try:
     }
 
     @st.cache_data(ttl=3600)
-    def fetch_data(api_key):
+    def fetch_all_data(api_key):
         data_dict = {}
         for series_id, name in full_map.items():
             try:
@@ -63,82 +65,90 @@ try:
                 continue
         return pd.DataFrame(data_dict).resample('ME').last().ffill()
 
-    raw_df = fetch_data(st.session_state.api_key)
-    df = raw_df.tail(120)
-    z = (df - df.rolling(36).mean()) / df.rolling(36).std()
-    latest_z = z.iloc[-1].dropna()
+    raw_df = fetch_all_data(st.session_state.api_key)
+    # Calculation for Z-Scores based on 36-month rolling window
+    z_df = (raw_df - raw_df.rolling(36).mean()) / raw_df.rolling(36).std()
+    latest_z = z_df.iloc[-1].dropna()
 
+    # Inversion Logic for Risk Indicators
     inv = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'Real USD Index']
-    adjusted_z = latest_z.copy()
-    for col in adjusted_z.index:
-        if col in inv: adjusted_z[col] = -adjusted_z[col]
+    scorecard_z = latest_z.copy()
+    for col in scorecard_z.index:
+        if col in inv: scorecard_z[col] = -scorecard_z[col]
 
-    # UI LAYOUT
-    st.title("Institutional Macro Dashboard")
-    tab1, tab2, tab3 = st.tabs(["Regime Detection", "Historical Explorer", "Release Calendar"])
+    # Dashboard Interface
+    st.title("Institutional Macro Terminal")
+    t1, t2, t3 = st.tabs(["Regime Detection", "Historical Data", "Release Schedule"])
 
-    with tab1:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.write("### Investment Clock Path")
-            path_df = z[['Leading Index', 'Breakevens']].tail(12).reset_index()
+    with t1:
+        col_left, col_right = st.columns([1, 1])
+        with col_left:
+            st.write("### Investment Clock")
+            # Limit path to 12 months for clarity
+            path = z_df[['Leading Index', 'Breakevens']].tail(12).reset_index()
             
-            fig_clock = go.Figure()
-            # Quadrant Rectangles
-            fig_clock.add_vrect(x0=0, x1=3, y0=0, y1=3, fillcolor="green", opacity=0.05, layer="below", line_width=0)
-            fig_clock.add_vrect(x0=-3, x1=0, y0=-3, y1=0, fillcolor="red", opacity=0.05, layer="below", line_width=0)
+            fig = go.Figure()
+            # Quadrant Lines
+            fig.add_shape(type="line", x0=-3, y0=0, x1=3, y1=0, line=dict(color="#3e4251", width=2))
+            fig.add_shape(type="line", x0=0, y0=-3, x1=0, y1=3, line=dict(color="#3e4251", width=2))
             
-            # Historical Path
-            fig_clock.add_trace(go.Scatter(
-                x=path_df['Leading Index'], y=path_df['Breakevens'],
-                mode='lines+markers', line=dict(color='rgba(255, 255, 255, 0.2)', width=2),
-                marker=dict(size=8, color='rgba(255, 255, 255, 0.5)'),
-                name='Path'
+            # Trail path
+            fig.add_trace(go.Scatter(
+                x=path['Leading Index'], y=path['Breakevens'],
+                mode='lines+markers',
+                line=dict(color='rgba(255,255,255,0.2)', width=2),
+                marker=dict(size=6, color='rgba(255,255,255,0.4)'),
+                name='12 Month Path'
             ))
             
-            # Current Point
-            fig_clock.add_trace(go.Scatter(
-                x=[path_df['Leading Index'].iloc[-1]], y=[path_df['Breakevens'].iloc[-1]],
-                mode='markers+text', marker=dict(size=20, color='gold', line=dict(width=2, color='white')),
-                text=["CURRENT"], textposition="top right", name='Current Status'
+            # Current location highlighted
+            fig.add_trace(go.Scatter(
+                x=[path['Leading Index'].iloc[-1]], 
+                y=[path['Breakevens'].iloc[-1]],
+                mode='markers+text',
+                marker=dict(size=18, color='#ffcc00', line=dict(width=2, color='white')),
+                text=["CURRENT POSITION"],
+                textposition="top right",
+                name='Current'
             ))
 
-            fig_clock.update_layout(
-                template="plotly_dark", height=600,
-                xaxis=dict(title="Growth (Z-Score)", range=[-3, 3], zeroline=True, zerolinewidth=2),
-                yaxis=dict(title="Inflation (Z-Score)", range=[-3, 3], zeroline=True, zerolinewidth=2),
+            fig.update_layout(
+                template="plotly_dark", height=550, margin=dict(l=20, r=20, t=20, b=20),
+                xaxis=dict(title="Growth Acceleration (Z)", range=[-3, 3], showgrid=False),
+                yaxis=dict(title="Inflation Acceleration (Z)", range=[-3, 3], showgrid=False),
                 showlegend=False
             )
-            st.plotly_chart(fig_clock, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
-        with c2:
+        with col_right:
             st.write("### Indicator Scorecard")
-            score_df = adjusted_z.sort_values().reset_index()
-            score_df.columns = ['Indicator', 'Score']
-            fig_bar = px.bar(score_df, x='Score', y='Indicator', orientation='h',
-                             color='Score', color_continuous_scale='RdYlGn', template="plotly_dark")
-            fig_bar.update_layout(height=600, coloraxis_showscale=False)
+            score_data = scorecard_z.sort_values().reset_index()
+            score_data.columns = ['Indicator', 'Z-Score']
+            fig_bar = px.bar(score_data, x='Z-Score', y='Indicator', orientation='h',
+                             color='Z-Score', color_continuous_scale='RdYlGn', 
+                             template="plotly_dark")
+            fig_bar.update_layout(height=550, coloraxis_showscale=False, margin=dict(t=20))
             st.plotly_chart(fig_bar, use_container_width=True)
 
-    with tab2:
-        st.write("### Historical Data Explorer")
-        selected_indicator = st.selectbox("Select Indicator", options=list(full_map.values()))
-        fig_hist = px.line(raw_df, y=selected_indicator, template="plotly_dark")
-        fig_hist.update_traces(line_color='#00d1ff')
-        st.plotly_chart(fig_hist, use_container_width=True)
+    with t2:
+        st.write("### Historical Time Series")
+        selection = st.selectbox("Select Macro Variable", options=list(full_map.values()))
+        fig_line = px.line(raw_df, y=selection, template="plotly_dark")
+        fig_line.update_traces(line_color='#00d1ff', line_width=2)
+        st.plotly_chart(fig_line, use_container_width=True)
 
-    with tab3:
-        st.write("### Macro Release Calendar (Typical Monthly Schedule)")
-        calendar_data = {
-            "Indicator": ["Jobless Claims", "VIX", "Yield Curve", "Retail Sales", "Housing Permits", "Industrial Production", "CPI / Breakevens", "PMI / Leading Index"],
-            "Frequency": ["Weekly (Thursday)", "Real-time", "Daily", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Mid-month)", "Monthly (Start-month)"],
-            "Reporting Agency": ["Dept of Labor", "CBOE", "Treasury", "Census Bureau", "Census Bureau", "Federal Reserve", "BLS", "OECD / Conference Board"]
+    with t3:
+        st.write("### Data Release Calendar")
+        calendar = {
+            "Metric": ["Employment / Claims", "Consumer Prices", "Retail Activity", "Monetary Policy", "Manufacturing"],
+            "Typical Release": ["Every Thursday", "Monthly (Mid)", "Monthly (Mid)", "Every 6 Weeks", "Monthly (Start)"],
+            "Source": ["Dept of Labor", "BLS", "Census Bureau", "Federal Reserve", "ISM / OECD"]
         }
-        st.table(pd.DataFrame(calendar_data))
+        st.table(pd.DataFrame(calendar))
 
-    if st.button("Reset Terminal"):
+    if st.button("Reset Terminal Session"):
         st.session_state.authenticated = False
         st.rerun()
 
 except Exception as e:
-    st.error(f"Terminal Fault: {e}")
+    st.error(f"Error encountered: {e}")
