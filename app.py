@@ -1,63 +1,71 @@
+import streamlit as st
 import pandas as pd
 import pandas_datareader.data as web
 import matplotlib.pyplot as plt
 import datetime
+import numpy as np
 
-# 1. SETUP
-FRED_API_KEY = '6fb9a24dabb670baab332ab6a281da1b '
-start = datetime.datetime.now() - datetime.timedelta(days=365*10)
+st.set_page_config(page_title="JPM Macro Monitor", layout="wide")
+st.title("Full JPM Appendix B Macro Dashboard")
 
-# 2. FULL MAPPING (All available on FRED)
-fred_indicators = {
-    'USSLIND': 'Leading Index (PMI Proxy)',
-    'USPHCI': 'Coincident Index (Services Proxy)',
-    'IC4WSA': 'Jobless Claims',
-    'MCUMFN': 'Capacity Utilization',
-    'BAA10Y': 'Credit Spreads',
-    'BAMLH0A0HYM2': 'High Yield Spreads',
-    'UMCSENT': 'Consumer Sentiment',
-    'T10Y2Y': 'Yield Curve',
-    'DTWEXBGS': 'USD Index',
-    'M2SL': 'Money Supply',
-    'TRUCKD11': 'Truck Tonnage (Baltic Proxy)',
-    'T10YIE': 'Inflation Breakevens',
-    'PERMIT': 'Housing Permits'
-}
+api_key = st.sidebar.text_input("Enter FRED API Key", type="password")
 
-# 3. FETCH DATA
-print("Fetching JPM Framework indicators from FRED...")
-df = web.DataReader(list(fred_indicators.keys()), 'fred', start, api_key=FRED_API_KEY)
-df = df.resample('ME').last().ffill()
-df.columns = [fred_indicators[col] for col in df.columns]
+if api_key:
+    try:
+        # Full Mapping (20+ Indicators)
+        full_map = {
+            'USSLIND': 'Leading Index (PMI)', 'USPHCI': 'Coincident (Services)',
+            'IC4WSA': 'Jobless Claims', 'MCUMFN': 'Capacity Util',
+            'T10Y2Y': 'Yield Curve', 'PERMIT': 'Housing Permits',
+            'DGORDER': 'New Orders', 'RSAFS': 'Retail Sales',
+            'BAA10Y': 'Credit Spreads', 'BAMLH0A0HYM2': 'HY Spreads',
+            'VIXCLS': 'VIX', 'M2SL': 'Money Supply',
+            'DTWEXBGS': 'USD Index', 'T10YIE': 'Breakevens',
+            'RAILFRTCARLOADS': 'Rail Freight', 'UMCSENT': 'Cons Sentiment',
+            'DRTSCWM': 'Lending Standards', 'REAINTRATREARAT10Y': 'Real Yields'
+        }
 
-# 4. CALCULATE LEADING-LAGGING SPREAD (Appendix B, Page 19)
-# JPM looks at whether the Leading Index is outpacing the Coincident (Lagging) one.
-df['Lead-Lag Spread'] = df['Leading Index (PMI Proxy)'] - df['Coincident Index (Services Proxy)']
+        start = datetime.datetime.now() - datetime.timedelta(days=365*10)
+        df = web.DataReader(list(full_map.keys()), 'fred', start, api_key=api_key)
+        df = df.resample('ME').last().ffill()
+        df.columns = [full_map[col] for col in df.columns]
 
-# 5. SCORING (Z-Score relative to 3-Year Trend)
-z = (df - df.rolling(36).mean()) / df.rolling(36).std()
+        # Calculate Z-Scores
+        z = (df - df.rolling(36).mean()) / df.rolling(36).std()
+        latest = z.iloc[-1].dropna()
 
-# 6. SIGNAL KEY (Assigning + / - based on JPM Appendix B)
-def jpm_signal_key(val, name):
-    # Inverting logic for Risk/Claims
-    inverse = ['Claims', 'Spreads']
-    if any(x in name for x in inverse):
-        val = -val
+        # Invert Risk Metrics
+        inverse_list = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'USD Index']
+        for col in latest.index:
+            if col in inverse_list:
+                latest[col] = -latest[col]
+
+        # UI: Big Summary
+        score = latest.mean()
+        st.subheader(f"Aggregate Regime Score: {score:.2f}")
         
-    if val > 1.2: return "++ Expansion"
-    elif val > 0: return "+ Recovery"
-    elif val > -1.2: return "- Slowdown"
-    else: return "-- Contraction"
+        # Quadrant Visualization
+        col_left, col_right = st.columns([1, 1])
+        
+        with col_left:
+            st.write("Style Cycle (2-Year Path)")
+            fig_clock, ax_clock = plt.subplots(figsize=(7, 7))
+            path = z[['Leading Index (PMI)', 'Breakevens']].tail(24)
+            ax_clock.plot(path.iloc[:,0], path.iloc[:,1], color='gray', alpha=0.3)
+            ax_clock.scatter(path.iloc[-1,0], path.iloc[-1,1], color='red', s=150)
+            ax_clock.axhline(0, color='black', lw=1); ax_clock.axvline(0, color='black', lw=1)
+            ax_clock.set_xlabel("Growth (Z)"); ax_clock.set_ylabel("Inflation (Z)")
+            st.pyplot(fig_clock)
 
-latest = z.iloc[-1]
-scorecard = pd.DataFrame({
-    'Z-Score': latest,
-    'Signal': [jpm_signal_key(v, n) for n, v in latest.items()]
-}).sort_values('Z-Score', ascending=False)
+        with col_right:
+            st.write("Appendix B Indicator Scorecard")
+            fig_bar, ax_bar = plt.subplots(figsize=(7, 9))
+            # Color coding (Green for positive contribution to regime, Red for negative)
+            colors = ['green' if x > 0 else 'red' for x in latest.sort_values()]
+            latest.sort_values().plot(kind='barh', color=colors, ax=ax_bar)
+            st.pyplot(fig_bar)
 
-print("\n--- JPM APPENDIX B: FRED-ONLY DASHBOARD ---")
-print(scorecard)
-
-# Summary Analysis
-bullish_signals = scorecard[scorecard['Signal'].str.contains('\+')].shape[0]
-print(f"\nNet Bullish Signals: {bullish_signals} / {len(scorecard)}")
+    except Exception as e:
+        st.error(f"Error: {e}")
+else:
+    st.info("Please enter your FRED API Key in the sidebar.")
