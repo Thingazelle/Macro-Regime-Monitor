@@ -1,5 +1,6 @@
-fredapi
-pandas
-plotly
-numpy
-streamlit
+pandas>=2.2.0
+numpy>=1.26.0
+pyarrow>=16.0.0
+duckdb>=1.0.0
+streamlit>=1.36.0
+pydantic>=2.8.0
