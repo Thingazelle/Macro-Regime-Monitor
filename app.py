@@ -8,7 +8,7 @@ import numpy as np
 # 1. PAGE SETUP
 st.set_page_config(page_title="JPM Macro Monitor", layout="wide")
 st.title("JPM Appendix B Macro Dashboard")
-st.write("Detection tool based on the J.P. Morgan Framework for Style Investing.")
+st.write("Detection tool based on the J.P. Morgan Framework for Style Investing (FRED Stable Version).")
 
 # 2. SIDEBAR FOR API KEY
 st.sidebar.header("Settings")
@@ -20,7 +20,7 @@ if api_key:
         # Initialize FRED API
         fred = Fred(api_key=api_key)
 
-        # Full Mapping (All 18 key FRED indicators from Appendix B)
+        # Updated Stable Mapping (Verified IDs)
         full_map = {
             'USSLIND': 'Leading Index (PMI)', 
             'USPHCI': 'Coincident (Services)',
@@ -34,30 +34,32 @@ if api_key:
             'BAMLH0A0HYM2': 'HY Spreads',
             'VIXCLS': 'VIX', 
             'M2SL': 'Money Supply',
-            'DTWEXBGS': 'USD Index', 
+            'RTWEXBGS': 'Real USD Index', 
             'T10YIE': 'Breakevens',
-            'RAILFRTCARLOADS': 'Rail Freight', 
+            'FRGHTPNUS': 'Freight Index', 
             'UMCSENT': 'Cons Sentiment',
             'DRTSCWM': 'Lending Standards', 
             'REAINTRATREARAT10Y': 'Real Yields'
         }
 
-        # Fetch Data using fredapi
-        data_list = []
+        # Fetch Data individually to catch any specific series errors
+        data_dict = {}
         for series_id, name in full_map.items():
-            series = fred.get_series(series_id)
-            series.name = name
-            data_list.append(series)
+            try:
+                series = fred.get_series(series_id)
+                data_dict[name] = series
+            except Exception as inner_e:
+                st.warning(f"Skipping {name} ({series_id}): {inner_e}")
         
-        df = pd.concat(data_list, axis=1)
-        df = df.resample('ME').last().ffill().tail(120) # Last 10 years
+        df = pd.DataFrame(data_dict)
+        df = df.resample('ME').last().ffill().tail(120)
 
         # Calculate Z-Scores
         z = (df - df.rolling(36).mean()) / df.rolling(36).std()
         latest = z.iloc[-1].dropna()
 
-        # Invert Risk Metrics (Inverse logic for JPM Framework)
-        inverse_list = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'USD Index']
+        # Invert Risk Metrics
+        inverse_list = ['Jobless Claims', 'Credit Spreads', 'HY Spreads', 'VIX', 'Lending Standards', 'Real USD Index']
         for col in latest.index:
             if col in inverse_list:
                 latest[col] = -latest[col]
@@ -68,12 +70,10 @@ if api_key:
         with col_left:
             st.subheader("Investment Clock (Regime Path)")
             fig_clock, ax_clock = plt.subplots(figsize=(7, 7))
-            # Using Leading Index for Growth and Breakevens for Inflation
             path = z[['Leading Index (PMI)', 'Breakevens']].tail(24)
             ax_clock.plot(path.iloc[:,0], path.iloc[:,1], color='gray', alpha=0.3, linestyle='--')
             ax_clock.scatter(path.iloc[-1,0], path.iloc[-1,1], color='red', s=200, zorder=5)
-            ax_clock.axhline(0, color='black', lw=1.5)
-            ax_clock.axvline(0, color='black', lw=1.5)
+            ax_clock.axhline(0, color='black', lw=1.5); ax_clock.axvline(0, color='black', lw=1.5)
             ax_clock.set_xlim(-3, 3); ax_clock.set_ylim(-3, 3)
             ax_clock.set_xlabel("Growth Z-Score"); ax_clock.set_ylabel("Inflation Z-Score")
             
@@ -93,21 +93,11 @@ if api_key:
             ax_bar.axvline(0, color='black', lw=1)
             st.pyplot(fig_bar)
 
-        # Style Recommendation
         st.divider()
         avg_score = latest.mean()
         st.write(f"### Current Aggregate Regime Score: {avg_score:.2f}")
-        
-        if avg_score > 0.5:
-            st.success("Regime: Expansion. Top Style: Momentum / High Beta")
-        elif avg_score > 0:
-            st.info("Regime: Recovery. Top Style: Value / Small Cap")
-        elif avg_score > -0.5:
-            st.warning("Regime: Slowdown. Top Style: Quality / Low Vol")
-        else:
-            st.error("Regime: Contraction. Top Style: Defensive Growth / Cash")
 
     except Exception as e:
-        st.error(f"Error: {e}. Check your API Key or Indicator IDs.")
+        st.error(f"Critical Error: {e}")
 else:
-    st.info("Please enter your FRED API Key in the sidebar to load the JPM Macro Monitor.")
+    st.info("Please enter your FRED API Key in the sidebar.")
