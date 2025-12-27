@@ -1,5 +1,5 @@
+fredapi
 pandas
-pandas_datareader
 matplotlib
 numpy
 streamlit
